@@ -1,0 +1,37 @@
+{
+  "name": "@thezelijah/majik-bond",
+  "version": "1.0.0",
+  "description": "Majik Bond is a lightweight TypeScript/JavaScript library for modeling bonds, calculating cashflows, yields, and tax effects. Ideal for investors, finance tools, or applications that need precise bond planning and return estimation.",
+  "license": "ISC",
+  "author": "Zelijah",
+  "type": "module",
+  "main": "index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jedlsf/majik-bond.git"
+  },
+  "keywords": [
+    "bond",
+    "finance",
+    "investment",
+    "yield",
+    "cashflow",
+    "tax",
+    "financial-calculator",
+    "typescript",
+    "javascript",
+    "financial-modeling"
+  ],
+  "homepage": "https://github.com/jedlsf/majik-bond#readme",
+  "bugs": {
+    "url": "https://github.com/jedlsf/majik-bond/issues"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "typescript": "^5.9.3"
+  }
+}
