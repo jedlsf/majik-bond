@@ -18,9 +18,9 @@ It’s ideal for scenarios where you want to **estimate bond returns, plan inves
 - Calculate coupon payments, total periods, and interest earned.
 - Compute Yield to Maturity (YTM) and current yield for any bond scenario.
 - Generate detailed cashflow tables, with optional monthly breakdowns.
-- Supports tax handling, including final withholding tax and capital gains.
-- Update bond parameters dynamically: face value, coupon rate, buy/sell price, maturity, and payment frequency.
-- Investment planning mode: input desired monthly income, and Majik Bond calculates the principal needed to meet it.
+- Handles taxes, including final withholding tax (FWT) and capital gains.
+- Dynamically update bond parameters: face value, coupon rate, buy/sell price, maturity, and payment frequency.
+- Investment planning mode: input desired monthly income, and Majik Bond calculates the principal required.
 - Fully TypeScript-friendly, works in both Node.js and browser environments.
 
 ---
@@ -49,7 +49,6 @@ const bond = new MajikBond({
   frequency: 2,               // Semi-annual coupons
   taxEnabled: true            // Include taxes
 });
-
 ```
 
 
@@ -111,8 +110,58 @@ bond.toggleTax(false);           // Disable tax
 - Verify maturity dates to prevent accidental errors.
 - Update bond parameters dynamically to model what-if scenarios.
 
-**Important:**
-Always store the un-hashed encryption key and RQX in environment variables to prevent tampering and accidental exposure.
+## What’s New in This Version
+
+This release introduces major improvements, added features, and better TypeScript support:
+
+### Core Enhancements
+
+- Fully TypeScript-friendly, with strict types for cashflows, bond parameters, tax, and YTM curves.
+- Improved constructor and initialization logic via MajikBond.initialize() with sensible defaults.
+- Chainable setter methods (setFaceValue, setCouponRate, setBuyPrice, etc.) for fluent updates.
+- Flexible maturity handling: supports both numeric years or explicit date ranges.
+
+### Yield & Pricing
+
+Yield calculations:
+
+- Yield to Maturity (YTM) via Newton–Raphson numerical solver.
+- Current Yield calculation.
+- Price computation now fully supports clean and dirty price modes, including accrued interest.
+- Macaulay and Modified Duration calculations for interest rate sensitivity.
+- New computeMarketRate() method automatically updates market rate based on current price.
+
+### Cashflow & Tax
+Detailed cashflow tables with optional monthly breakdown.
+
+Tax handling enhancements:
+- Final Withholding Tax (FWT) on coupon interest
+- Capital gains tax when sold before maturity
+- Estate/Donor tax (informational)
+- Methods to compute total interest, total cash received, total tax, and net gain.
+
+### Sale & Investment Planning
+
+- **simulateSale()** returns a complete sale summary with clean/dirty price, accrued interest, capital gains, and net gain.
+- **getRequiredInvestmentForMonthlyIncome()** estimates the principal needed to achieve a desired monthly income.
+- Methods for calculating net gain and total return for both held and sold bonds.
+
+### Analytics & Visualization
+
+- get **YTMCurve()** generates a [Plotly](https://plotly.com/javascript/react)-ready YTM curve for visualization.
+- Option to configure points, smoothing, and curve name.
+
+### API & Utilities
+
+- **parseFromJSON()** and **toJSON()** for serialization/deserialization.
+- Improved robustness: validation on negative coupon rates, zero or negative face value, and invalid tax rates.
+- Private helper methods now encapsulate complex calculations, keeping the API clean.
+
+### Miscellaneous
+
+- Improved error handling for invalid maturity dates and negative values.
+- Better documentation and inline JSDoc for all methods and properties.
+- Flexible priceMode switching (Clean vs Dirty) with chainable API.
 
 
 ## Contributing

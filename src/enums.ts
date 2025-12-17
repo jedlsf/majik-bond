@@ -68,3 +68,10 @@ export enum DayCountConvention {
     /** Actual / 365 (Fixed) */
     ACTUAL_365 = "ACTUAL/365",
 }
+
+
+export enum PriceMode {
+  Clean,
+  Dirty
+}
+

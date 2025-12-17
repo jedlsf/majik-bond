@@ -1,164 +1,21 @@
 import {
-    DayCountConvention
+    DayCountConvention,
+    PriceMode
 } from "./enums";
+import {
+    BondMaturity,
+    BondParams,
+    BondSaleSummary,
+    BondTaxSettings,
+    CashflowSummary,
+    CouponFrequency,
+    DateRange,
+    ISODateString,
+    YTMCurvePlot
+} from "./types";
 import { DayCountCalculator } from "./utils";
 
 
-
-/**
- * ISO 8601 date string (UTC recommended).
- * Example: "2026-01-15T00:00:00.000Z"
- */
-export type ISODateString = string;
-
-/**
- * Explicit start and end date range.
- */
-export interface DateRange {
-    /** Start date (ISO 8601) */
-    start: ISODateString;
-
-    /** End date (ISO 8601) */
-    end: ISODateString;
-}
-
-/**
- * Computed bond maturity metadata.
- */
-export interface BondMaturity {
-    /** Issue or start date */
-    start: ISODateString;
-
-    /** Maturity date */
-    end: ISODateString;
-
-    /** Total maturity length in years (fractional allowed) */
-    years: number;
-
-    issueDate?: ISODateString;
-
-}
-
-/**
- * Coupon payment frequency per year.
- * - 1  = Annual
- * - 2  = Semi-annual
- * - 4  = Quarterly
- * - 12 = Monthly
- */
-export type CouponFrequency = 1 | 2 | 4 | 12;
-
-
-/**
- * Initialization parameters for creating a bond instance.
- */
-export interface BondParams {
-    /**
-     * Par value of the bond.
-     * @default 1000
-     */
-    faceValue?: number;
-
-    /**
-     * Annual coupon rate as a decimal.
-     * Example: 0.0625 = 6.25%
-     * @default 0.05
-     */
-    couponRate?: number;
-
-    /**
-     * Bond maturity.
-     * - number → years to maturity
-     * - DateRange → explicit start/end dates
-     * @default 5 years
-     */
-    maturity?: number | DateRange;
-
-    /**
-     * Bond buy and sell price expressed as a ratio of face value.
-     * Example:
-     * - 1.0 = par
-     * - 0.95 = 95% of face value
-     * @default 1.0
-     */
-    price?: {
-        buy?: number;
-        sell?: number;
-    };
-
-    /**
-     * Coupon payment frequency per year.
-     * @default 2 (semi-annual)
-     */
-    frequency?: CouponFrequency;
-
-    /**
-     * Market discount rate (used for pricing, duration, YTM initial guess).
-     * @default couponRate
-     */
-    marketRate?: number;
-
-    /**
-    * Day count convention for interest accrual.
-    * @default ACTUAL/365
-    */
-    dayCount?: DayCountConvention;
-
-    tax?: BondTaxSettings;
-
-}
-
-
-/**
- * Single cashflow entry for a bond period.
- */
-export interface CashflowSummary {
-    /**
-     * Sequential period index (1-based).
-     */
-    period: number;
-
-    /**
-     * Human-readable date label (YYYY-MM).
-     */
-    dateLabel: string;
-
-    /**
-     * Interest payment for the period.
-     */
-    interest: number;
-
-    /**
-     * Principal repayment (non-zero only at maturity).
-     */
-    principal: number;
-
-    /**
-     * Total cash received for the period.
-     */
-    total: number;
-
-    tax: number;
-}
-
-/**
- * Optional tax settings for a bond.
- */
-export interface BondTaxSettings {
-    /** Master switch: if false, all taxes are ignored */
-    enabled?: boolean;
-
-    /** Final withholding tax on coupon interest (decimal, e.g., 0.2 = 20%) */
-    interestFWT?: number;
-
-    /** Capital gains tax rate when sold before maturity */
-    capitalGains?: number;
-
-    /** Estate or donor tax rate (informational only) */
-    estateOrDonor?: number;
-
-
-}
 
 
 
@@ -173,18 +30,20 @@ export class MajikBond {
     faceValue: number;
     couponRate: number;
     maturity: BondMaturity;
-    price: { buy: number; sell?: number };
+    price: { buy: number; sell: number | null };
     frequency: CouponFrequency;
     marketRate: number;
     dayCount: DayCountConvention;
     cashflowSummary: CashflowSummary[];
     tax: BondTaxSettings;
+    private ytm_curve?: YTMCurvePlot[];
+    priceMode: PriceMode = PriceMode.Clean;
 
     private constructor(params: {
         faceValue: number;
         couponRate: number;
         maturity: BondMaturity;
-        price: { buy: number; sell?: number };
+        price: { buy: number; sell: number | null };
         frequency: CouponFrequency;
         marketRate: number;
         dayCount: DayCountConvention;
@@ -250,7 +109,7 @@ export class MajikBond {
             maturity,
             price: {
                 buy: params.price?.buy || 1,
-                sell: params.price?.sell || 1,
+                sell: params.price?.sell || null,
             },
             frequency: params.frequency ?? 2,
             marketRate: params.marketRate ?? params.couponRate ?? 0.05,
@@ -262,9 +121,9 @@ export class MajikBond {
                 estateOrDonor: params.tax?.estateOrDonor ?? 0,
             }
         });
-        newInstance.computeCashflowSummary();
+        newInstance.recomputeDerivedData();
+        newInstance.computeMarketRate();
 
-        console.log(newInstance);
 
         return newInstance;
     }
@@ -282,8 +141,17 @@ export class MajikBond {
      * Total number of coupon periods over bond lifetime.
      */
     get totalPeriods(): number {
-        return Math.floor(this.maturity.years * this.frequency);
+        const start = new Date(this.maturity.start);
+        const end = new Date(this.maturity.end);
+
+        const years =
+            (end.getTime() - start.getTime()) /
+            (1000 * 60 * 60 * 24 * 365.25);
+
+        return Math.round(years * this.frequency);
     }
+
+
 
     /**
      * Coupon rate.
@@ -306,8 +174,11 @@ export class MajikBond {
      * `Annual Coupon` / `Current Market Price`
      */
     getCurrentYield(): number {
-        return (this.faceValue * this.couponRate) / (this.price.buy * this.faceValue);
+        const annualCoupon = this.faceValue * this.couponRate;
+        const marketValue = this.faceValue * this.price.buy;
+        return annualCoupon / marketValue;
     }
+
 
     /**
      * Yield to Maturity (YTM).
@@ -318,35 +189,74 @@ export class MajikBond {
      * @param tolerance Convergence threshold
      */
     getYTM(iterations = 100, tolerance = 1e-6): number {
-        let ytm = this.marketRate;
+        return this.solveYTMFromPrice(
+            this.price.buy,
+            this.maturity.years,
+            iterations,
+            tolerance
+        );
+    }
+
+
+
+    private solveYTMFromPrice(
+        priceRatio: number,
+        maturityYears: number,
+        iterations = 100,
+        tolerance = 1e-6
+    ): number {
+
+        if (maturityYears <= 0) return 0;
+
+        const periods = Math.round(maturityYears * this.frequency);
+        const coupon = (this.faceValue * this.couponRate) / this.frequency;
+
+        let ytm = this.marketRate || this.couponRate;
 
         for (let i = 0; i < iterations; i++) {
             let f = 0;
             let df = 0;
 
-            for (let t = 1; t <= this.totalPeriods; t++) {
+            for (let t = 1; t <= periods; t++) {
                 const discount = Math.pow(1 + ytm / this.frequency, t);
-                f += this.couponPerPeriod / discount;
-                df -= (t * this.couponPerPeriod) /
+                f += coupon / discount;
+                df -= (t * coupon) /
                     (this.frequency * discount * (1 + ytm / this.frequency));
             }
 
-            const finalDiscount = Math.pow(1 + ytm / this.frequency, this.totalPeriods);
-            f += this.faceValue / finalDiscount - this.price.buy * this.faceValue;
-            df -= (this.totalPeriods * this.faceValue) /
+            const finalDiscount = Math.pow(1 + ytm / this.frequency, periods);
+            f += this.faceValue / finalDiscount - priceRatio * this.faceValue;
+            df -= (periods * this.faceValue) /
                 (this.frequency * finalDiscount * (1 + ytm / this.frequency));
 
-            const next = ytm - f / df;
-            if (!isFinite(next) || Math.abs(df) < 1e-10) break;
-            if (Math.abs(next - ytm) < tolerance) break;
-            ytm = next;
+            if (Math.abs(df) < 1e-10) break;
 
+            const next = ytm - f / df;
+            if (!isFinite(next) || Math.abs(next - ytm) < tolerance) break;
+
+            ytm = next;
         }
 
         return ytm;
     }
 
+
     // --- Pricing ---
+
+    /**
+     * Set global price mode: clean or dirty.
+     */
+    setPriceMode(mode: PriceMode): this {
+        this.priceMode = mode;
+        this.recomputeDerivedData();
+        return this;
+    }
+
+    /**
+    * Convenience methods
+    */
+    useCleanPrice(): this { return this.setPriceMode(PriceMode.Clean); }
+    useDirtyPrice(): this { return this.setPriceMode(PriceMode.Dirty); }
 
     /**
      * Computes bond price given a discount rate.
@@ -354,21 +264,40 @@ export class MajikBond {
      * @param rate Market discount rate
      * @returns Price as a ratio of face value
      */
-    getBondPrice(rate = this.marketRate): number {
-        let price = 0;
-
-        for (let t = 1; t <= this.totalPeriods; t++) {
-            price += this.couponPerPeriod / Math.pow(1 + rate / this.frequency, t);
-        }
-
-        price += this.faceValue / Math.pow(1 + rate / this.frequency, this.totalPeriods);
-        return price / this.faceValue;
+    getBondPrice(rate = this.marketRate, asOfDate: string = new Date().toISOString()): number {
+        return this.computePriceForMode(rate, asOfDate, this.priceMode);
     }
+
+
+
+    /**
+     * Automatically computes the market rate for the bond (YTM).
+     * Uses the current buy price (clean or dirty) without mutating state.
+     */
+    computeMarketRate(): void {
+        const accrued = this.getAccruedInterest();
+
+        const priceRatio =
+            this.priceMode === PriceMode.Clean
+                ? this.price.buy
+                : this.price.buy + accrued / this.faceValue;
+
+        this.marketRate = this.solveYTMFromPrice(
+            priceRatio,
+            this.maturity.years
+        );
+    }
+
+
+
+
+
 
     // --- Interest Rate Sensitivity ---
 
     /**
-     * Macaulay Duration (in years).
+     * Macaulay Duration (clean-price basis).
+     * Accrued interest is excluded by design.
      */
     getDuration(): number {
         let weightedSum = 0;
@@ -490,14 +419,6 @@ export class MajikBond {
     }
 
 
-    getCouponPerPeriod(): number {
-        let coupon = (this.faceValue * this.couponRate) / this.frequency;
-        if (this.tax.enabled && this.tax.interestFWT) {
-            coupon *= (1 - this.tax.interestFWT);
-        }
-        return coupon;
-    }
-
 
     /**
      * Total cash received over the bond lifetime.
@@ -533,29 +454,112 @@ export class MajikBond {
         return this.netGain / invested;
     }
 
+    // --- Sell / Sale Methods ---
 
-    // --- Net gain if sold early ---
-    getNetGainOnSale(): number {
-        if (this.price.sell == null) throw new Error("Sell price not set");
-
-        const invested = this.faceValue * this.price.buy; // initial investment
-        const totalInterest = this.getTotalInterestEarned(); // tax-adjusted interest
-
-        // Compute capital gain
-        let capitalGain = this.faceValue * (this.price.sell - this.price.buy);
-        if (this.tax.enabled && this.tax.capitalGains) {
-            capitalGain *= (1 - this.tax.capitalGains);
+    /**
+     * Returns the effective sell price to use for a given date.
+     * Prefers manual sell price if set, otherwise uses market-based dirty price.
+     */
+    getSellPrice(asOfDate: string = new Date().toISOString()): number {
+        if (this.price.sell != null) {
+            return this.price.sell; // ratio
         }
+        return this.getBondPrice(this.marketRate, asOfDate); // dirty price ratio
+    }
 
-        // Net gain = total received (interest + capital gain) - initial investment
-        return totalInterest + capitalGain - invested;
+    /**
+     * Capital gains tax if sold at the current sell price.
+     */
+    getCapitalGainsTax(asOfDate: string = new Date().toISOString()): number {
+        if (!this.tax.enabled || !this.tax.capitalGains) return 0;
+
+        const sellPrice = this.getSellPrice(asOfDate);
+
+        const capitalGain = this.faceValue * (sellPrice - this.price.buy);
+        return capitalGain > 0 ? capitalGain * this.tax.capitalGains : 0;
+    }
+
+    /**
+     * Net gain if sold at a specific date.
+     * Accounts for capital gains, accrued interest, and initial investment.
+     */
+    getNetGainOnSale(asOfDate: string = new Date().toISOString()): number {
+        const sellPrice = this.getSellPrice(asOfDate); // ratio
+        const grossProceeds = sellPrice * this.faceValue + this.getAccruedInterest(asOfDate);
+        const invested = this.faceValue * this.price.buy;
+
+        // Subtract capital gains tax if applicable
+        const capitalGainsTax = this.getCapitalGainsTax(asOfDate);
+
+        const netGain = grossProceeds - invested - capitalGainsTax;
+        return netGain;
+    }
+
+    /**
+     * Total return as a ratio if sold at a specific date.
+     */
+    getTotalReturnOnSale(asOfDate: string = new Date().toISOString()): number {
+        const invested = this.faceValue * this.price.buy;
+        return this.getNetGainOnSale(asOfDate) / invested;
+    }
+
+    /**
+     * Simulate a sale at a given date and return detailed summary.
+     */
+    simulateSale(asOfDate: string = new Date().toISOString()): BondSaleSummary {
+        const cleanPrice = this.computePriceForMode(this.marketRate, asOfDate, PriceMode.Clean);
+        const dirtyPrice = this.computePriceForMode(this.marketRate, asOfDate, PriceMode.Dirty);
+
+        const accrued = this.getAccruedInterest(asOfDate);
+        const sellPriceUsed = this.getSellPrice(asOfDate);
+        const capitalGainsTax = this.getCapitalGainsTax(asOfDate);
+        const netGain = this.getNetGainOnSale(asOfDate);
+
+        return {
+            asOfDate,
+            cleanPrice: cleanPrice * this.faceValue,
+            dirtyPrice: dirtyPrice * this.faceValue,
+            accruedInterest: accrued,
+            capitalGainsTax,
+            netGain,
+            sellPriceUsed,
+        };
     }
 
 
+    private computePriceForMode(
+        rate: number = this.marketRate,
+        asOfDate: string = new Date().toISOString(),
+        mode: PriceMode = PriceMode.Clean
+    ): number {
+        let price = 0;
 
-    getTotalReturnOnSale(): number {
-        const invested = this.faceValue * this.price.buy;
-        return this.getNetGainOnSale() / invested;
+        const valuationDate = new Date(asOfDate);
+        const issueDate = new Date(this.maturity.start);
+        const elapsedYears =
+            (valuationDate.getTime() - issueDate.getTime()) /
+            (1000 * 60 * 60 * 24 * 365.25);
+
+        const elapsedPeriods = elapsedYears * this.frequency;
+
+        for (let t = 1; t <= this.totalPeriods; t++) {
+            const time = t - elapsedPeriods;
+            if (time <= 0) continue;
+
+            price += this.couponPerPeriod /
+                Math.pow(1 + rate / this.frequency, time);
+        }
+
+
+        price += this.faceValue / Math.pow(1 + rate / this.frequency, this.totalPeriods);
+        price /= this.faceValue; // ratio
+
+        if (mode === PriceMode.Dirty) {
+            const accrued = this.getAccruedInterest(asOfDate);
+            price += accrued / this.faceValue;
+        }
+
+        return price;
     }
 
     // --- Setter methods (chainable) ---
@@ -568,7 +572,7 @@ export class MajikBond {
     */
     setDayCount(convention: DayCountConvention): this {
         this.dayCount = convention;
-        this.computeCashflowSummary();
+        this.recomputeDerivedData();
         return this;
     }
 
@@ -577,7 +581,7 @@ export class MajikBond {
     setFaceValue(value: number): this {
         if (value <= 0) throw new Error("Face value must be positive");
         this.faceValue = value;
-        this.computeCashflowSummary();
+        this.recomputeDerivedData();
         return this;
     }
 
@@ -585,7 +589,7 @@ export class MajikBond {
     setCouponRate(rate: number): this {
         if (rate < 0) throw new Error("Coupon rate cannot be negative");
         this.couponRate = rate;
-        this.computeCashflowSummary();
+        this.recomputeDerivedData();
         return this;
     }
 
@@ -595,20 +599,21 @@ export class MajikBond {
     setBuyPrice(price: number): this {
         if (price <= 0) throw new Error("Buy price must be positive");
         this.price.buy = price;
-        this.computeCashflowSummary();
+        this.recomputeDerivedData();
         return this;
     }
 
     setSellPrice(price: number): this {
         if (price <= 0) throw new Error("Sell price must be positive");
         this.price.sell = price;
+        this.recomputeDerivedData();
         return this;
     }
 
 
     setFrequency(freq: CouponFrequency): this {
         this.frequency = freq;
-        this.computeCashflowSummary();
+        this.recomputeDerivedData();
         return this;
     }
 
@@ -616,7 +621,8 @@ export class MajikBond {
     setMarketRate(rate: number): this {
         if (rate < 0) throw new Error("Market rate cannot be negative");
         this.marketRate = rate;
-        this.computeCashflowSummary();
+        this.recomputeDerivedData();
+        this.computeYTMCurve();
         return this;
     }
 
@@ -650,7 +656,8 @@ export class MajikBond {
                 years,
             };
         }
-        this.computeCashflowSummary();
+        this.recomputeDerivedData();
+        this.computeYTMCurve();
 
 
         return this;
@@ -673,7 +680,7 @@ export class MajikBond {
         }
 
         this.recomputeMaturityYears();
-        this.computeCashflowSummary();
+        this.recomputeDerivedData();
         return this;
     }
 
@@ -690,7 +697,8 @@ export class MajikBond {
         }
 
         this.recomputeMaturityYears();
-        this.computeCashflowSummary();
+        this.recomputeDerivedData();
+        this.computeYTMCurve();
         return this;
     }
 
@@ -702,7 +710,7 @@ export class MajikBond {
     toggleTax(bool?: boolean): this {
 
         this.tax.enabled = bool ?? !this.tax.enabled;
-        this.computeCashflowSummary();
+        this.recomputeDerivedData();
 
         return this;
     }
@@ -710,19 +718,21 @@ export class MajikBond {
     setInterestFWT(rate: number): this {
         if (rate < 0 || rate > 1) throw new Error("Interest FWT must be between 0 and 1");
         this.tax.interestFWT = rate;
-        this.computeCashflowSummary(); // recalc cashflows if enabled
+        this.recomputeDerivedData();
         return this;
     }
 
     setCapitalGains(rate: number): this {
         if (rate < 0 || rate > 1) throw new Error("Capital gains tax must be between 0 and 1");
         this.tax.capitalGains = rate;
+        this.recomputeDerivedData();
         return this;
     }
 
     setEstateOrDonor(rate: number): this {
         if (rate < 0 || rate > 1) throw new Error("Estate/Donor tax must be between 0 and 1");
         this.tax.estateOrDonor = rate;
+        this.recomputeDerivedData();
         return this;
     }
 
@@ -741,16 +751,6 @@ export class MajikBond {
     }
 
 
-    /**
-     * Capital gains tax if sold at the current sell price.
-     */
-    getCapitalGainsTax(): number {
-        if (!this.price.sell) throw new Error("Sell price not set");
-        if (!this.tax.enabled || !this.tax.capitalGains) return 0;
-
-        const capitalGain = this.faceValue * (this.price.sell - this.price.buy);
-        return capitalGain * this.tax.capitalGains;
-    }
 
 
     private recomputeMaturityYears(): void {
@@ -765,6 +765,110 @@ export class MajikBond {
             (end.getTime() - start.getTime()) /
             (1000 * 60 * 60 * 24 * 365.25);
     }
+
+    private computeYTMCurve(options?: {
+        points?: number;
+        smoothing?: number;
+        name?: string;
+    }): void {
+
+        const points = options?.points ?? 10;
+        const smoothing = options?.smoothing ?? 0.8;
+
+        const maturities: number[] = [];
+        const ytms: number[] = [];
+
+        for (let i = 1; i <= points; i++) {
+            const minYears = 1 / this.frequency;
+            const maturityYears = Math.max(
+                minYears,
+                (this.maturity.years / points) * i
+            );
+
+
+            maturities.push(maturityYears);
+            ytms.push(
+                this.solveYTMFromPrice(
+                    this.price.buy,
+                    maturityYears
+                )
+            );
+        }
+
+        this.ytm_curve = [
+            {
+                x: maturities,
+                y: ytms,
+                type: "scatter",
+                mode: "lines+markers",
+                name: options?.name ?? "YTM Curve",
+                line: {
+                    shape: "spline",
+                    smoothing,
+                    width: 2
+                },
+                marker: { size: 6 },
+                hovertemplate:
+                    "Maturity: %{x:.2f} yrs<br>YTM: %{y:.2%}<extra></extra>"
+            }
+        ];
+    }
+
+
+
+    /**
+     * Generates a Plotly-ready YTM curve.
+     *
+     * @param options Optional curve configuration
+     */
+    get YTMCurve(): YTMCurvePlot[] {
+        if (!this.ytm_curve) {
+            this.computeYTMCurve();
+        }
+        return this.ytm_curve!;
+    }
+
+
+    private recomputeDerivedData(): void {
+        this.computeCashflowSummary();
+    }
+
+    private getAccruedInterest(asOfDate: string = new Date().toISOString()): number {
+        if (this.totalPeriods === 0) return 0;
+
+        const periodMonths = 12 / this.frequency;
+        const issueDate = new Date(this.maturity.start);
+        const valuationDate = new Date(asOfDate);
+
+        let lastCouponDate = new Date(issueDate);
+        let nextCouponDate = new Date(issueDate);
+
+        for (let p = 1; p <= this.totalPeriods; p++) {
+            nextCouponDate = new Date(lastCouponDate);
+            nextCouponDate.setMonth(nextCouponDate.getMonth() + periodMonths);
+
+            if (valuationDate < nextCouponDate) break;
+            lastCouponDate = new Date(nextCouponDate);
+        }
+
+        if (valuationDate <= lastCouponDate) return 0;
+
+        const yearFraction = DayCountCalculator.yearFraction(
+            lastCouponDate,
+            valuationDate,
+            this.dayCount
+        );
+
+        let accruedInterest = this.faceValue * this.couponRate * yearFraction;
+
+        if (this.tax.enabled && this.tax.interestFWT) {
+            accruedInterest *= (1 - this.tax.interestFWT);
+        }
+
+        return accruedInterest;
+    }
+
+
 
 
     /**
@@ -782,7 +886,8 @@ export class MajikBond {
                 : structuredClone
                     ? structuredClone(json)
                     : JSON.parse(JSON.stringify(json));
-        return new MajikBond(
+
+        const parsedInstance = MajikBond.initialize(
             {
                 couponRate: parsed.couponRate,
                 dayCount: parsed.dayCount,
@@ -794,6 +899,7 @@ export class MajikBond {
                 tax: parsed.tax
             }
         );
+        return parsedInstance;
     }
 
     /**
