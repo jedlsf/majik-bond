@@ -42,13 +42,15 @@ npm i @thezelijah/majik-bond
 ```ts
 import { MajikBond } from "@thezelijah/majik-bond";
 
-const bond = new MajikBond({
-  faceValue: 100000,          // Principal amount
-  couponRate: 0.06,           // 6% annual coupon
-  maturityYears: 5,            // 5-year bond
-  frequency: 2,               // Semi-annual coupons
-  taxEnabled: true            // Include taxes
-});
+const bond = MajikBond.initialize()
+.setFaceValue(100000)    // Principal amount
+.setCouponRate(0.06)     // 6% annual coupon
+.toggleTax(true)  // Include taxes
+.setIssueDate(new Date().toISOString()) // Defaults to now
+.setMaturityDate(new Date().toISOString()) // auto computes maturity years duration
+.setFrequency(2) // Accepts 1 | 2 | 4 | 12  - Use type `CouponFrequency`
+;   
+
 ```
 
 
