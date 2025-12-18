@@ -1,3 +1,4 @@
+import { type MajikMoney } from "@thezelijah/majik-money";
 import { DayCountConvention } from "./enums";
 
 /**
@@ -42,19 +43,19 @@ export interface BondSaleSummary {
   asOfDate: ISODateString;
 
   /** Clean price of the bond (excluding accrued interest) */
-  cleanPrice: number;
+  cleanPrice: MajikMoney;
 
   /** Dirty price of the bond (including accrued interest) */
-  dirtyPrice: number;
+  dirtyPrice: MajikMoney;
 
   /** Accrued interest up to the sale date */
-  accruedInterest: number;
+  accruedInterest: MajikMoney;
 
   /** Capital gains tax on the sale */
-  capitalGainsTax: number;
+  capitalGainsTax: MajikMoney;
 
   /** Net gain from the sale after taxes and accrued interest */
-  netGain: number;
+  netGain: MajikMoney;
 
   sellPriceUsed: number;
 }
@@ -78,7 +79,9 @@ export interface BondParams {
    * Par value of the bond.
    * @default 1000
    */
-  faceValue?: number;
+  faceValue?: MajikMoney;
+
+  currencyCode?: string;
 
   /**
    * Annual coupon rate as a decimal.
@@ -147,19 +150,19 @@ export interface CashflowSummary {
   /**
    * Interest payment for the period.
    */
-  interest: number;
+  interest: MajikMoney;
 
   /**
    * Principal repayment (non-zero only at maturity).
    */
-  principal: number;
+  principal: MajikMoney;
 
   /**
    * Total cash received for the period.
    */
-  total: number;
+  total: MajikMoney;
 
-  tax: number;
+  tax: MajikMoney;
 }
 
 /**
